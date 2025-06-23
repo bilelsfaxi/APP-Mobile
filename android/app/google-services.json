@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "445557531210",
+    "project_id": "doggipose",
+    "storage_bucket": "doggipose.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:445557531210:android:b1af6c916984f6f567fcb3",
+        "android_client_info": {
+          "package_name": "doggi.pose"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "445557531210-1neb0r773lc2jmo9dpp7307kk3bdd94p.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD6KF9eAJzr-97Ycolqv4a-gJC0y9NijoA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "445557531210-1neb0r773lc2jmo9dpp7307kk3bdd94p.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
