@@ -1,7 +1,7 @@
-// progress_provider.dart 
+// progress_provider.dart
 import 'package:flutter/material.dart';
 import '../models/session_model.dart';
-import '../services/storage_service.dart';
+import 'training_provider.dart';
 
 class ProgressProvider extends ChangeNotifier {
   List<SessionModel> _sessions = [];
@@ -11,12 +11,12 @@ class ProgressProvider extends ChangeNotifier {
   String? _error;
   String? get error => _error;
 
-  Future<void> fetchSessions() async {
+  void fetchSessions(TrainingProvider trainingProvider) {
     _loading = true;
     _error = null;
     notifyListeners();
     try {
-      _sessions = await StorageService.fetchSessions();
+      _sessions = List.from(trainingProvider.localSessions);
     } catch (e) {
       _error = e.toString();
     } finally {
@@ -24,4 +24,4 @@ class ProgressProvider extends ChangeNotifier {
       notifyListeners();
     }
   }
-} 
+}

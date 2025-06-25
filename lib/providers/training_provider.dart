@@ -1,8 +1,7 @@
-// training_provider.dart 
+// training_provider.dart
 import 'package:flutter/material.dart';
 import '../models/session_model.dart';
 import '../services/api_service.dart';
-import '../services/storage_service.dart';
 
 class TrainingProvider extends ChangeNotifier {
   SessionModel? _currentSession;
@@ -11,6 +10,9 @@ class TrainingProvider extends ChangeNotifier {
   bool get loading => _loading;
   String? _error;
   String? get error => _error;
+
+  final List<SessionModel> _localSessions = [];
+  List<SessionModel> get localSessions => _localSessions;
 
   Future<void> startTrainingSession(String order, String imagePath) async {
     _loading = true;
@@ -26,8 +28,7 @@ class TrainingProvider extends ChangeNotifier {
         result: result,
         timestamp: DateTime.now(),
       );
-      // Stockage du résultat dans Firebase
-      await StorageService.saveSession(_currentSession!);
+      _localSessions.add(_currentSession!);
     } catch (e) {
       _error = e.toString();
     } finally {
@@ -40,4 +41,4 @@ class TrainingProvider extends ChangeNotifier {
     _currentSession = null;
     notifyListeners();
   }
-} 
+}
