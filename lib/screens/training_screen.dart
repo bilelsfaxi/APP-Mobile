@@ -4,6 +4,36 @@ import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 import '../services/api_service.dart';
 import 'dart:async';
+import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:video_player/video_player.dart';
+import 'package:path_provider/path_provider.dart';
+// ignore: avoid_web_libraries_in_flutter
+import 'dart:html' as html;
+import '../web_platform_view_registry_stub.dart'
+    if (dart.library.html) '../web_platform_view_registry_web.dart';
+// ignore: implementation_imports
+import 'dart:ui' as ui;
+
+// Variable globale pour éviter les doublons d'enregistrement
+Set<String> _registeredVideoViewTypes = <String>{};
+
+void registerVideoViewFactory(String url) {
+  if (!kIsWeb) return;
+  final viewType = 'videoElement-${url.hashCode}';
+  if (_registeredVideoViewTypes.contains(viewType)) return;
+  registerWebViewFactory(
+    viewType,
+    (int viewId) {
+      final video = html.VideoElement()
+        ..src = url
+        ..controls = true
+        ..autoplay = false;
+      return video;
+    },
+  );
+  _registeredVideoViewTypes.add(viewType);
+}
 
 class Challenge {
   final String emoji;
@@ -73,6 +103,13 @@ class _TrainingScreenState extends State<TrainingScreen> {
   Duration _elapsed = Duration.zero;
   Timer? _timer;
 
+  Uint8List? _webImageBytes;
+  Uint8List? _webVideoBytes;
+  Uint8List? _annotatedWebImageBytes;
+  Uint8List? _annotatedWebVideoBytes;
+  String? _webVideoUrl;
+  VideoPlayerController? _videoController;
+
   void _startLiveDetection() {
     setState(() {
       _liveMode = true;
@@ -97,6 +134,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
   @override
   void dispose() {
     _timer?.cancel();
+    _videoController?.dispose();
     super.dispose();
   }
 
@@ -104,12 +142,24 @@ class _TrainingScreenState extends State<TrainingScreen> {
     final picker = ImagePicker();
     final pickedFile = await picker.pickImage(source: ImageSource.gallery);
     if (pickedFile != null) {
-      setState(() {
-        _imageFile = File(pickedFile.path);
-        _videoFile = null;
-        _apiResult = null;
-        _cameraActive = false;
-      });
+      if (kIsWeb) {
+        final bytes = await pickedFile.readAsBytes();
+        setState(() {
+          _webImageBytes = bytes;
+          _imageFile = null;
+          _videoFile = null;
+          _apiResult = null;
+          _cameraActive = false;
+        });
+      } else {
+        setState(() {
+          _imageFile = File(pickedFile.path);
+          _webImageBytes = null;
+          _videoFile = null;
+          _apiResult = null;
+          _cameraActive = false;
+        });
+      }
     }
   }
 
@@ -117,12 +167,24 @@ class _TrainingScreenState extends State<TrainingScreen> {
     final picker = ImagePicker();
     final pickedFile = await picker.pickVideo(source: ImageSource.gallery);
     if (pickedFile != null) {
-      setState(() {
-        _videoFile = File(pickedFile.path);
-        _imageFile = null;
-        _apiResult = null;
-        _cameraActive = false;
-      });
+      if (kIsWeb) {
+        final bytes = await pickedFile.readAsBytes();
+        setState(() {
+          _webVideoBytes = bytes;
+          _videoFile = null;
+          _imageFile = null;
+          _apiResult = null;
+          _cameraActive = false;
+        });
+      } else {
+        setState(() {
+          _videoFile = File(pickedFile.path);
+          _webVideoBytes = null;
+          _imageFile = null;
+          _apiResult = null;
+          _cameraActive = false;
+        });
+      }
     }
   }
 
@@ -146,19 +208,53 @@ class _TrainingScreenState extends State<TrainingScreen> {
     });
     try {
       final challenge = kChallenges[_selectedChallenge];
-      if (_imageFile != null) {
-        final result =
+      Map<String, dynamic> result;
+      if (kIsWeb && _webImageBytes != null) {
+        result = await ApiService.analyzeImageBytes(
+            _webImageBytes!, challenge.title);
+      } else if (kIsWeb && _webVideoBytes != null) {
+        result = await ApiService.analyzeVideoBytes(
+            _webVideoBytes!, challenge.title);
+      } else if (_imageFile != null) {
+        result =
             await ApiService.analyzeImage(_imageFile!.path, challenge.title);
-        setState(() {
-          _apiResult = result.toString();
-        });
       } else if (_videoFile != null) {
-        final result =
+        result =
             await ApiService.analyzeVideo(_videoFile!.path, challenge.title);
-        setState(() {
-          _apiResult = result.toString();
-        });
+      } else {
+        throw Exception('Aucune image ou vidéo sélectionnée');
       }
+      if (result['annotated_video_bytes'] != null) {
+        if (kIsWeb) {
+          final blob =
+              html.Blob([result['annotated_video_bytes']], 'video/mp4');
+          final url = html.Url.createObjectUrlFromBlob(blob);
+          setState(() {
+            _webVideoUrl = url;
+            _annotatedWebVideoBytes = result['annotated_video_bytes'];
+            _videoController?.dispose();
+            _videoController = null;
+          });
+        } else {
+          final tempDir = await getTemporaryDirectory();
+          final file = await File('${tempDir.path}/annotated_video.mp4')
+              .writeAsBytes(result['annotated_video_bytes']);
+          final controller = VideoPlayerController.file(file);
+          await controller.initialize();
+          setState(() {
+            _videoController?.dispose();
+            _videoController = controller;
+            _annotatedWebVideoBytes = result['annotated_video_bytes'];
+            _webVideoUrl = null;
+          });
+        }
+      }
+      setState(() {
+        if (result['annotated_image_bytes'] != null) {
+          _annotatedWebImageBytes = result['annotated_image_bytes'];
+        }
+        _apiResult = "Analyse terminée";
+      });
     } catch (e) {
       setState(() {
         _apiResult = 'Erreur API: $e';
@@ -198,9 +294,18 @@ class _TrainingScreenState extends State<TrainingScreen> {
               : CameraCard(
                   imageFile: _imageFile,
                   videoFile: _videoFile,
+                  webImageBytes: _webImageBytes,
+                  webVideoBytes: _webVideoBytes,
+                  annotatedWebImageBytes: _annotatedWebImageBytes,
+                  annotatedWebVideoBytes: _annotatedWebVideoBytes,
+                  webVideoUrl: _webVideoUrl,
+                  videoController: _videoController,
                   onUploadPhoto: _pickImage,
                   onUploadVideo: _pickVideo,
-                  onSendToApi: (_imageFile != null || _videoFile != null)
+                  onSendToApi: (_imageFile != null ||
+                          _videoFile != null ||
+                          (kIsWeb && _webImageBytes != null) ||
+                          (kIsWeb && _webVideoBytes != null))
                       ? _sendToApi
                       : null,
                   apiResult: _apiResult,
@@ -435,33 +540,64 @@ class CurrentChallengeCard extends StatelessWidget {
 class CameraCard extends StatelessWidget {
   final File? imageFile;
   final File? videoFile;
+  final Uint8List? webImageBytes;
+  final Uint8List? webVideoBytes;
+  final Uint8List? annotatedWebImageBytes;
+  final Uint8List? annotatedWebVideoBytes;
+  final String? webVideoUrl;
+  final VideoPlayerController? videoController;
   final VoidCallback onUploadPhoto;
   final VoidCallback onUploadVideo;
   final VoidCallback? onSendToApi;
   final String? apiResult;
   final bool loading;
-  const CameraCard(
-      {super.key,
-      this.imageFile,
-      this.videoFile,
-      required this.onUploadPhoto,
-      required this.onUploadVideo,
-      this.onSendToApi,
-      this.apiResult,
-      this.loading = false});
+  const CameraCard({
+    super.key,
+    this.imageFile,
+    this.videoFile,
+    this.webImageBytes,
+    this.webVideoBytes,
+    this.annotatedWebImageBytes,
+    this.annotatedWebVideoBytes,
+    this.webVideoUrl,
+    this.videoController,
+    required this.onUploadPhoto,
+    required this.onUploadVideo,
+    this.onSendToApi,
+    this.apiResult,
+    this.loading = false,
+  });
 
   @override
   Widget build(BuildContext context) {
     Widget preview;
-    if (imageFile != null) {
+    if (kIsWeb && webImageBytes != null) {
       preview = ClipRRect(
         borderRadius: BorderRadius.circular(12),
-        child: Image.file(imageFile!,
-            height: 180, fit: BoxFit.cover, width: double.infinity),
+        child: AspectRatio(
+          aspectRatio: 16 / 9,
+          child: Image.memory(
+            webImageBytes!,
+            fit: BoxFit.contain,
+            width: double.infinity,
+          ),
+        ),
+      );
+    } else if (imageFile != null) {
+      preview = ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: AspectRatio(
+          aspectRatio: 16 / 9,
+          child: Image.file(
+            imageFile!,
+            fit: BoxFit.contain,
+            width: double.infinity,
+          ),
+        ),
       );
     } else if (videoFile != null) {
       preview = Container(
-        height: 180,
+        height: 220,
         decoration: BoxDecoration(
           color: Colors.black12,
           borderRadius: BorderRadius.circular(12),
@@ -477,6 +613,45 @@ class CameraCard extends StatelessWidget {
           const Text('Camera not active',
               style: TextStyle(color: Colors.grey, fontSize: 16)),
         ],
+      );
+    }
+
+    Widget? annotatedPreview;
+    if (annotatedWebImageBytes != null) {
+      annotatedPreview = ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: AspectRatio(
+          aspectRatio: 16 / 9,
+          child: Image.memory(
+            annotatedWebImageBytes!,
+            fit: BoxFit.contain,
+            width: double.infinity,
+          ),
+        ),
+      );
+    }
+
+    Widget? annotatedVideoPreview;
+    if (kIsWeb && webVideoUrl != null) {
+      final viewType = 'videoElement-${webVideoUrl.hashCode}';
+      registerVideoViewFactory(webVideoUrl!);
+      annotatedVideoPreview = Padding(
+        padding: const EdgeInsets.only(top: 16),
+        child: AspectRatio(
+          aspectRatio: 16 / 9,
+          child: HtmlElementView(
+            viewType: viewType,
+          ),
+        ),
+      );
+    } else if (videoController != null &&
+        videoController!.value.isInitialized) {
+      annotatedVideoPreview = Padding(
+        padding: const EdgeInsets.only(top: 16),
+        child: AspectRatio(
+          aspectRatio: videoController!.value.aspectRatio,
+          child: VideoPlayer(videoController!),
+        ),
       );
     }
 
@@ -562,6 +737,14 @@ class CameraCard extends StatelessWidget {
                     style: const TextStyle(
                         fontSize: 14, color: Color(0xFF2B50EC))),
               ),
+            ],
+            if (annotatedPreview != null) ...[
+              const SizedBox(height: 16),
+              annotatedPreview,
+            ],
+            if (annotatedVideoPreview != null) ...[
+              const SizedBox(height: 16),
+              annotatedVideoPreview,
             ],
           ],
         ),
